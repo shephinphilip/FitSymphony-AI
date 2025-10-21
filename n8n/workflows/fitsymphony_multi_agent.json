@@ -1,0 +1,927 @@
+{
+  "name": "FitSymphony Multi-Agent Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "fitsymphony-intake",
+        "options": {
+          "responseMode": "onReceived"
+        }
+      },
+      "id": "1",
+      "name": "Form Trigger",
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 1,
+      "position": [
+        -1200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const payload = items[0].json;\nreturn [{ json: {\n  action: payload.action || 'orchestrate_plan',\n  user: payload.user || {},\n  progress: payload.progress || {},\n  feedback: payload.feedback || {},\n  explain: payload.explain || {},\n  raw: payload\n}}];"
+      },
+      "id": "2",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -950,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "propertyName": "action",
+        "rules": [
+          {
+            "operation": "equal",
+            "value": "orchestrate_plan"
+          },
+          {
+            "operation": "equal",
+            "value": "log_progress"
+          },
+          {
+            "operation": "equal",
+            "value": "submit_feedback"
+          },
+          {
+            "operation": "equal",
+            "value": "explainability"
+          }
+        ]
+      },
+      "id": "3",
+      "name": "Action Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [
+        -750,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nconst cached = store.userProfiles || {};\nitems[0].json.profileStore = cached;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.user_profiles = 'n8n/data/user_profiles.json';\nreturn items;"
+      },
+      "id": "4",
+      "name": "Load Profiles",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -550,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = items[0].json.profileStore || {};\nconst input = items[0].json;\nconst user = input.user;\nconst userId = user.user_id || user.email || 'anonymous';\nif (!userId) {\n  throw new Error('User identifier is required');\n}\nconst profile = {\n  ...store[userId],\n  ...user\n};\nstore[userId] = profile;\nitems[0].json.profile = profile;\nitems[0].json.userId = userId;\nitems[0].json.profileStore = store;\nreturn items;"
+      },
+      "id": "5",
+      "name": "Profile Agent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -350,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nstore.userProfiles = items[0].json.profileStore;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.user_profiles = 'n8n/data/user_profiles.json';\nreturn items;"
+      },
+      "id": "6",
+      "name": "Persist Profiles",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -150,
+        -250
+      ]
+    },
+    {
+      "parameters": {
+        "filePath": "n8n/data/workouts.csv"
+      },
+      "id": "7",
+      "name": "Load Workouts",
+      "type": "n8n-nodes-base.readBinaryFile",
+      "typeVersion": 1,
+      "position": [
+        -550,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const binary = items[0].binary.data;\nconst csv = Buffer.from(binary.data, binary.encoding || 'base64').toString();\nconst [header, ...rows] = csv.split(/\r?\n/).filter(Boolean);\nconst columns = header.split(',');\nconst workouts = rows.map(row => {\n  const values = row.split(',');\n  const entry = {};\n  columns.forEach((col, idx) => { entry[col] = values[idx]; });\n  return entry;\n});\nconst profile = items[0].json.profile;\nconst matches = workouts.filter(w => (!profile.level || w.user_level === profile.level) && (!profile.goal || w.goal === profile.goal));\nconst plan = matches.map(w => ({\n  exercise: w.exercise,\n  intensity: w.intensity,\n  sets: Number(w.sets),\n  reps: Number(w.reps),\n  duration_minutes: Number(w.duration_minutes)\n}));\nitems[0].json.workoutPlan = plan;\nitems[0].json.rawWorkouts = workouts;\nreturn items;"
+      },
+      "id": "8",
+      "name": "Workout Agent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -350,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const profile = items[0].json.profile || {};\nconst feedback = items[0].json.feedback || {};\nconst plan = items[0].json.workoutPlan || [];\nconst conflicts = [];\nplan.forEach((step, idx) => {\n  if (profile.injuries && profile.injuries.includes('shoulder') && /push|press|burpee/i.test(step.exercise)) {\n    conflicts.push({ index: idx, reason: 'Shoulder injury conflicts with ' + step.exercise });\n  }\n  if (profile.constraints && profile.constraints.includes('no burpees') && /burpee/i.test(step.exercise)) {\n    conflicts.push({ index: idx, reason: 'Profile constraint prohibits burpees' });\n  }\n});\nif (feedback.intent && feedback.intent === 'increase_intensity') {\n  conflicts.push({ index: null, reason: 'Intensity increase request pending safety check' });\n}\nitems[0].json.conflicts = conflicts;\nreturn items;"
+      },
+      "id": "9",
+      "name": "Coordinator Agent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -150,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{$json.conflicts.length}}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "10",
+      "name": "Conflict Detected?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [
+        50,
+        -40
+      ]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:11434/api/generate",
+        "options": {
+          "bodyContentType": "json",
+          "responseFormat": "json"
+        },
+        "jsonBody": "={{ {\n  model: 'llama3',\n  prompt: `Generate a safe fallback workout alternative given profile ${JSON.stringify($json.profile)} and conflicts ${JSON.stringify($json.conflicts)} for plan ${JSON.stringify($json.workoutPlan)}. Respond with JSON containing keys action and rationale.`\n} }}"
+      },
+      "id": "11",
+      "name": "Dynamic Rule Generator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [
+        260,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const response = items[0].json;\nconst fallback = response.response || response;\nconst original = $items(0)[0].json;\nif (fallback && fallback.action && fallback.action.replacements) {\n  fallback.action.replacements.forEach(replacement => {\n    const idx = replacement.index;\n    if (typeof idx === 'number' && original.workoutPlan[idx]) {\n      original.workoutPlan[idx] = replacement.exercise;\n    }\n  });\n}\noriginal.fallbackRationale = fallback.rationale || 'Applied LLM generated fallback';\nreturn [{ json: original }];"
+      },
+      "id": "12",
+      "name": "Apply Fallback",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        470,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nconst logs = store.agentLogs || [];\nconst entry = {\n  timestamp: new Date().toISOString(),\n  agent: 'CoordinatorAgent',\n  action: 'Resolved conflict using fallback',\n  reason: $json.fallbackRationale || 'No fallback needed',\n  user_id: $json.userId,\n  details: { plan: $json.workoutPlan, conflicts: $json.conflicts }\n};\nlogs.push(entry);\nstore.agentLogs = logs;\nitems[0].json.agentLogEntry = entry;\nreturn items;"
+      },
+      "id": "13",
+      "name": "Log Coordinator Decision",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        660,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const profile = items[0].json.profile || {};\nconst plan = items[0].json.workoutPlan || [];\nconst meals = plan.map(step => ({\n  meal: step.intensity === 'high' ? 'High-carb vegan bowl' : 'Balanced vegan salad',\n  calories: step.intensity === 'high' ? 550 : 420,\n  macro_focus: step.intensity === 'high' ? 'carb_load' : 'balanced'\n}));\nitems[0].json.mealPlan = meals;\nreturn items;"
+      },
+      "id": "14",
+      "name": "Nutrition Agent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        260,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const progress = items[0].json.progress || {};\nconst userId = items[0].json.userId;\nconst defaults = { date: new Date().toISOString().slice(0,10), weight_kg: null, workout_minutes: 0, calories: 0 };\nitems[0].json.progressRecord = { user_id: userId, ...defaults, ...progress };\nreturn items;"
+      },
+      "id": "15",
+      "name": "Progress Agent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        470,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nconst records = store.progressRecords || [];\nif ($json.progressRecord) {\n  records.push($json.progressRecord);\n}\nstore.progressRecords = records;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.progress = 'n8n/data/progress_data.csv';\nreturn items;"
+      },
+      "id": "16",
+      "name": "Persist Progress",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        660,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const feedback = items[0].json.feedback || {};\nconst userId = items[0].json.userId;\nconst store = getWorkflowStaticData('global');\nconst feedbackData = store.feedbackData || {};\nif (Object.keys(feedback).length) {\n  feedbackData[userId] = (feedbackData[userId] || []);\n  feedbackData[userId].push({ ...feedback, timestamp: new Date().toISOString() });\n}\nstore.feedbackData = feedbackData;\nitems[0].json.feedbackEntries = feedbackData[userId] || [];\nreturn items;"
+      },
+      "id": "17",
+      "name": "Feedback Agent",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        260,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const logEntry = {\n  timestamp: new Date().toISOString(),\n  agent: 'Explainability',\n  action: 'Compiled orchestration summary',\n  reason: 'Workflow completion',\n  user_id: $json.userId,\n  profile: $json.profile,\n  workout: $json.workoutPlan,\n  meals: $json.mealPlan,\n  feedback: $json.feedbackEntries,\n  fallback: $json.fallbackRationale || null\n};\nitems[0].json.agentLogEntry = logEntry;\nreturn items;"
+      },
+      "id": "18",
+      "name": "Explainability Logger",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        470,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nconst logs = store.agentLogs || [];\nlogs.push($json.agentLogEntry);\nstore.agentLogs = logs;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.agent_logs = 'n8n/data/agent_logs.json';\nreturn items;"
+      },
+      "id": "19",
+      "name": "Persist Logs",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        660,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{ json: {\n  user_id: $json.userId,\n  profile: $json.profile,\n  workout_plan: $json.workoutPlan,\n  meals: $json.mealPlan,\n  progress_record: $json.progressRecord,\n  feedback: $json.feedbackEntries,\n  fallback: $json.fallbackRationale || null,\n  data_sources: $json.dataSources || {}\n}}];"
+      },
+      "id": "20",
+      "name": "Compose Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        880,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nitems[0].json.progressTable = store.progressRecords || [];\nreturn items;"
+      },
+      "id": "21",
+      "name": "Load Progress Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -550,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return items;"
+      },
+      "id": "22",
+      "name": "Parse Progress Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -350,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const record = $json.progress || {};\nconst defaults = { date: new Date().toISOString().slice(0,10), weight_kg: null, workout_minutes: 0, calories: 0 };\nconst newRecord = { user_id: $json.user.user_id || 'anonymous', ...defaults, ...record };\nitems[0].json.progressRecord = newRecord;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.progress = 'n8n/data/progress_data.csv';\nreturn items;"
+      },
+      "id": "23",
+      "name": "Progress Updater",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -150,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nconst records = store.progressRecords || [];\nrecords.push($json.progressRecord);\nstore.progressRecords = records;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.progress = 'n8n/data/progress_data.csv';\nreturn items;"
+      },
+      "id": "24",
+      "name": "Log Progress Only",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        50,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const logEntry = {\n  timestamp: new Date().toISOString(),\n  agent: 'ProgressAgent',\n  action: 'Logged standalone progress entry',\n  reason: 'Progress form submission',\n  user_id: $json.user.user_id || 'anonymous',\n  payload: $json.progressRecord\n};\nitems[0].json.agentLogEntry = logEntry;\nreturn items;"
+      },
+      "id": "25",
+      "name": "Progress Log Entry",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        260,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nconst logs = store.agentLogs || [];\nlogs.push($json.agentLogEntry);\nstore.agentLogs = logs;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.agent_logs = 'n8n/data/agent_logs.json';\nreturn items;"
+      },
+      "id": "26",
+      "name": "Persist Progress Log",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        470,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{ json: { message: 'Progress recorded', progress: $json.progressRecord, data_sources: $json.dataSources || {} } }];"
+      },
+      "id": "27",
+      "name": "Progress Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        660,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const fb = $json.feedback || {};\nconst userId = $json.user.user_id || 'anonymous';\nconst entry = { ...fb, user_id: userId, timestamp: new Date().toISOString() };\nitems[0].json.feedbackEntry = entry;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.feedback = 'n8n/data/feedback_data.json';\nreturn items;"
+      },
+      "id": "28",
+      "name": "Prepare Feedback",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -350,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nconst feedback = store.feedbackData || {};\nfeedback[$json.feedbackEntry.user_id] = feedback[$json.feedbackEntry.user_id] || [];\nfeedback[$json.feedbackEntry.user_id].push($json.feedbackEntry);\nstore.feedbackData = feedback;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.feedback = 'n8n/data/feedback_data.json';\nreturn items;"
+      },
+      "id": "29",
+      "name": "Persist Feedback",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -150,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const logEntry = {\n  timestamp: new Date().toISOString(),\n  agent: 'FeedbackAgent',\n  action: 'Captured user feedback',\n  reason: $json.feedback.intent || 'User submission',\n  user_id: $json.feedbackEntry.user_id,\n  payload: $json.feedbackEntry\n};\nitems[0].json.agentLogEntry = logEntry;\nreturn items;"
+      },
+      "id": "30",
+      "name": "Feedback Log Entry",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        50,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nconst logs = store.agentLogs || [];\nlogs.push($json.agentLogEntry);\nstore.agentLogs = logs;\nitems[0].json.dataSources = items[0].json.dataSources || {};\nitems[0].json.dataSources.agent_logs = 'n8n/data/agent_logs.json';\nreturn items;"
+      },
+      "id": "31",
+      "name": "Persist Feedback Log",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        260,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return [{ json: { message: 'Feedback captured', feedback: $json.feedbackEntry, data_sources: $json.dataSources || {} } }];"
+      },
+      "id": "32",
+      "name": "Feedback Response",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        470,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const store = getWorkflowStaticData('global');\nconst logs = store.agentLogs || [];\nitems[0].json.agentLogs = logs;\nreturn items;"
+      },
+      "id": "33",
+      "name": "Load Logs",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -350,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "const logs = $json.agentLogs || [];\nconst userId = $json.user.user_id || 'anonymous';\nconst filtered = logs.filter(entry => entry.user_id === userId || !entry.user_id);\nreturn [{ json: { user_id: userId, explainability: filtered, data_sources: { agent_logs: 'n8n/data/agent_logs.json' } } }];"
+      },
+      "id": "34",
+      "name": "Explainability Extract",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        -150,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "functionCode": "return items;"
+      },
+      "id": "35",
+      "name": "Return Explainability",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        50,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json"
+      },
+      "id": "36",
+      "name": "Send Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1100,
+        120
+      ]
+    }
+  ],
+  "connections": {
+    "Form Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Action Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Router": {
+      "main": [
+        [
+          {
+            "node": "Load Profiles",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Progress Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Load Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Profiles": {
+      "main": [
+        [
+          {
+            "node": "Profile Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Profile Agent": {
+      "main": [
+        [
+          {
+            "node": "Persist Profiles",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Persist Profiles": {
+      "main": [
+        [
+          {
+            "node": "Load Workouts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Workouts": {
+      "main": [
+        [
+          {
+            "node": "Workout Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workout Agent": {
+      "main": [
+        [
+          {
+            "node": "Coordinator Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Coordinator Agent": {
+      "main": [
+        [
+          {
+            "node": "Conflict Detected?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conflict Detected?": {
+      "main": [
+        [
+          {
+            "node": "Dynamic Rule Generator",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nutrition Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dynamic Rule Generator": {
+      "main": [
+        [
+          {
+            "node": "Apply Fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Fallback": {
+      "main": [
+        [
+          {
+            "node": "Log Coordinator Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Coordinator Decision": {
+      "main": [
+        [
+          {
+            "node": "Nutrition Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nutrition Agent": {
+      "main": [
+        [
+          {
+            "node": "Progress Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Progress Agent": {
+      "main": [
+        [
+          {
+            "node": "Persist Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Progress": {
+      "main": [
+        [
+          {
+            "node": "Feedback Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feedback Agent": {
+      "main": [
+        [
+          {
+            "node": "Explainability Logger",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explainability Logger": {
+      "main": [
+        [
+          {
+            "node": "Persist Logs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Logs": {
+      "main": [
+        [
+          {
+            "node": "Compose Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compose Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Progress Data": {
+      "main": [
+        [
+          {
+            "node": "Parse Progress Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Progress Data": {
+      "main": [
+        [
+          {
+            "node": "Progress Updater",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Progress Updater": {
+      "main": [
+        [
+          {
+            "node": "Log Progress Only",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Progress Only": {
+      "main": [
+        [
+          {
+            "node": "Progress Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Progress Log Entry": {
+      "main": [
+        [
+          {
+            "node": "Persist Progress Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Progress Log": {
+      "main": [
+        [
+          {
+            "node": "Progress Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Progress Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Feedback": {
+      "main": [
+        [
+          {
+            "node": "Persist Feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Feedback": {
+      "main": [
+        [
+          {
+            "node": "Feedback Log Entry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feedback Log Entry": {
+      "main": [
+        [
+          {
+            "node": "Persist Feedback Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Feedback Log": {
+      "main": [
+        [
+          {
+            "node": "Feedback Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Feedback Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Logs": {
+      "main": [
+        [
+          {
+            "node": "Explainability Extract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Explainability Extract": {
+      "main": [
+        [
+          {
+            "node": "Return Explainability",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Return Explainability": {
+      "main": [
+        [
+          {
+            "node": "Send Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
