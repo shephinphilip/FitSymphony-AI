@@ -1,0 +1,5 @@
+user_level,goal,exercise,intensity,sets,reps,duration_minutes
+beginner,fat_loss,bodyweight squats,moderate,3,12,20
+beginner,fat_loss,walking,low,1,0,30
+beginner,strength,resistance band rows,low,3,10,20
+intermediate,fat_loss,cycling,high,4,15,30
